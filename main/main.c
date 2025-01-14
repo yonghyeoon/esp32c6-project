@@ -1,7 +1,6 @@
-#include "main.h"
+#include "led.h"
 
 void app_main(void)
 {
-    bspInit();
-    apInit();
+    init_led();
 }
