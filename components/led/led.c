@@ -12,24 +12,42 @@ static const char *TAG = "led";
 /* Use project configuration menu (idf.py menuconfig) to choose the GPIO to blink,
    or you can edit the following line and set a number here.
 */
-#define BLINK_GPIO CONFIG_BLINK_GPIO
-
-static uint8_t s_led_state = 0;
-
-#ifdef CONFIG_BLINK_LED_STRIP
-
-static int r = 16;
-static int g = 16;
-static int b = 16;
+#define LED_GPIO CONFIG_LED_GPIO
+#define LED_BLINK_PERIOD CONFIG_LED_BLINK_PERIOD
 
 static led_strip_handle_t led_strip;
 
-uint8_t get_led_state(void) {
-    return s_led_state;
-}
+static bool led_state = false;
+static int r = 16, g = 16, b = 16;
 
-void set_led_state_toggle(void) {
-    s_led_state = !s_led_state;
+static LedCommand command = LED_BLINK;
+
+static TaskHandle_t ledTaskHandle;
+// LED 태스크
+static void led_task(void *pvParameters) {
+    while (1) {
+        switch (command)
+        {
+            case LED_BLINK:
+                ESP_LOGI(TAG, "before on led!");
+                on_led();   // LED 켜기
+                ESP_LOGI(TAG, "after on led!");
+                vTaskDelay(LED_BLINK_PERIOD / portTICK_PERIOD_MS); // 500ms 대기
+                ESP_LOGI(TAG, "before off led!");
+                off_led();  // LED 끄기
+                ESP_LOGI(TAG, "after off led!");
+                vTaskDelay(LED_BLINK_PERIOD / portTICK_PERIOD_MS); // 500ms 대기
+                break;
+            case LED_ON:
+                if (!led_state) {
+                    on_led();
+                }
+                break;
+            
+            default:
+                break;
+        }
+    }
 }
 
 void led_set_pixel_color(int red, int green, int blue){
@@ -38,44 +56,41 @@ void led_set_pixel_color(int red, int green, int blue){
     b = blue;
 }
 
-void blink_led(void)
-{
-    /* If the addressable LED is enabled */
-    if (s_led_state) {
+void on_led(void) {
+    if (!led_state) {
         /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
         led_strip_set_pixel(led_strip, 0, r, g, b);
         /* Refresh the strip to send data */
         led_strip_refresh(led_strip);
-    } else {
+        led_state = true;
+    }
+}
+
+void off_led(void) {
+    if (led_state) {
         /* Set all LED off to clear all pixels */
         led_strip_clear(led_strip);
+        led_state = false;
     }
 }
 
 void configure_led(void)
 {
-    ESP_LOGI(TAG, "Example configured to blink addressable LED!");
+    ESP_LOGI(TAG, "configured LED!");
     /* LED strip initialization with the GPIO and pixels number*/
     led_strip_config_t strip_config = {
-        .strip_gpio_num = BLINK_GPIO,
+        .strip_gpio_num = LED_GPIO,
         .max_leds = 1, // at least one LED on board
     };
     ESP_LOGI(TAG, "%d", strip_config.led_pixel_format);
-#if CONFIG_BLINK_LED_STRIP_BACKEND_RMT  // RMT - Remote Control Transceiver
+
+    // RMT - Remote Control Transceiver
     led_strip_rmt_config_t rmt_config = {
         .resolution_hz = 10 * 1000 * 1000, // 10MHz
         .flags.with_dma = false,
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
-#elif CONFIG_BLINK_LED_STRIP_BACKEND_SPI
-    led_strip_spi_config_t spi_config = {
-        .spi_bus = SPI2_HOST,
-        .flags.with_dma = true,
-    };
-    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
-#else
-#error "unsupported LED strip backend"
-#endif
+
     /* Set all LED off to clear all pixels */
     led_strip_clear(led_strip);
 }
@@ -84,26 +99,11 @@ void init_led() {
     configure_led();
 }
 
-#elif CONFIG_BLINK_LED_GPIO
-
-void blink_led(void)
-{
-    /* Set the GPIO level according to the state (LOW or HIGH)*/
-    gpio_set_level(BLINK_GPIO, s_led_state);
+// LED 상태 변경
+void set_command_led(LedCommand comm) {
+    command = comm;
 }
 
-void configure_led(void)
-{
-    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
-    gpio_reset_pin(BLINK_GPIO);
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+void turn_on_led(void) {
+    xTaskCreate(&led_task, "LED Task", 2048, NULL, 0, &ledTaskHandle);
 }
-
-void init_led() {
-    configure_led();
-}
-
-#else
-#error "unsupported LED type"
-#endif
